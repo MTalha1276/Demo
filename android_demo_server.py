@@ -352,24 +352,79 @@ class DemoServer:
     def handle_client(self, session):
         """Handle individual client connection"""
         try:
+            remainder = b""
             while self.running and session.connected:
                 try:
                     data = session.client_socket.recv(65536)
                     if not data:
                         break
 
-                    # Check if this is a file transfer (binary) or JSON
-                    try:
-                        message = json.loads(data.decode('utf-8'))
-                        self.handle_json_message(session, message)
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        # Binary file transfer
-                        self.handle_file_data(session, data)
+                    combined = remainder + data
+                    remainder = b""
 
+                    idx = 0
+                    while idx < len(combined):
+                        pending = session.device_info.get("pending_file")
+                        if pending:
+                            # We are receiving a binary file
+                            total_needed = pending["size"]
+                            current_have = len(pending["data"])
+                            remaining_needed = total_needed - current_have
+
+                            chunk = combined[idx : idx + remaining_needed]
+                            pending["data"] += chunk
+                            idx += len(chunk)
+
+                            if len(pending["data"]) >= total_needed:
+                                # File complete!
+                                file_type = pending["type"]
+                                save_dir = IMAGES_DIR if file_type == "image" else (AUDIO_DIR if file_type == "audio" else DOCS_DIR)
+                                filename = pending["filename"]
+                                filepath = os.path.join(save_dir, filename)
+
+                                with open(filepath, 'wb') as f:
+                                    f.write(pending["data"])
+
+                                self.log(f"[+] File saved: {filepath} ({len(pending['data'])} bytes)")
+                                with self.lock:
+                                    if file_type == "image":
+                                        session.total_images_received += 1
+                                    elif file_type == "audio":
+                                        session.total_audio_received += 1
+
+                                # Send acknowledgment
+                                ack = json.dumps({
+                                    "type": "ack",
+                                    "message": "file_received",
+                                    "filename": filename
+                                }).encode('utf-8')
+                                session.client_socket.send(ack)
+                                session.device_info.pop("pending_file", None)
+                        else:
+                            # We are expecting JSON
+                            try:
+                                chunk_str = combined[idx:].decode('utf-8')
+                                import json
+                                decoder = json.JSONDecoder()
+                                message, end_pos = decoder.raw_decode(chunk_str)
+
+                                # Process JSON message
+                                self.handle_json_message(session, message)
+
+                                # Move idx forward by the number of bytes the JSON took
+                                # This handles UTF-8 characters correctly
+                                json_bytes_len = chunk_str[:end_pos].encode('utf-8').__len__()
+                                idx += json_bytes_len
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                # Incomplete JSON - wait for more data
+                                remainder = combined[idx:]
+                                idx = len(combined)
                 except ConnectionResetError:
                     break
                 except Exception as e:
                     self.log(f"[!] Session {session.session_id} error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     break
 
         except Exception as e:
